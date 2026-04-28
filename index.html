@@ -245,7 +245,7 @@
         let silenceTimeout = null;
         let currentTranscript = '';
         let isConversationMode = false;
-        const SILENCE_THRESHOLD = 1500; // 1.5 seconds of silence = end of speech
+        const SILENCE_THRESHOLD = 2000; // 2 seconds of silence = end of speech
         
         // Wake word detection using Web Speech API
         function initWakeWord() {
@@ -364,6 +364,7 @@
                 // Update current transcript
                 if (finalTranscript) {
                     currentTranscript += finalTranscript + ' ';
+                    console.log('Final transcript so far:', currentTranscript);
                 }
                 
                 // Show real-time transcription
@@ -372,14 +373,16 @@
                     instruction.textContent = displayText.trim().slice(-50) + (displayText.length > 50 ? '...' : '');
                 }
                 
-                // Reset silence timer on any speech
+                // Reset silence timer on any speech activity
                 clearTimeout(silenceTimeout);
-                silenceTimeout = setTimeout(() => {
-                    // Silence detected - end conversation turn
-                    if (currentTranscript.trim()) {
+                
+                // Only start silence timer if we have some final transcript
+                if (currentTranscript.trim()) {
+                    silenceTimeout = setTimeout(() => {
+                        console.log('Silence detected, ending turn...');
                         endConversationTurn();
-                    }
-                }, SILENCE_THRESHOLD);
+                    }, SILENCE_THRESHOLD);
+                }
             };
             
             conversationRecognition.onerror = (event) => {
