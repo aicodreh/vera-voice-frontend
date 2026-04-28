@@ -264,9 +264,9 @@
         let silenceCheckInterval = null;
         let lastSoundTime = null;
         const SILENCE_THRESHOLD = 20; // Volume below this = silence
-        const SPEECH_THRESHOLD = 30; // Volume must exceed this to count as speech
-        const SILENCE_DURATION = 1200; // 1.2 seconds of silence = stop (faster)
-        const MIN_SPEECH_DURATION = 500; // Minimum 0.5s of speech required
+        const SPEECH_THRESHOLD = 28; // Volume must exceed this to count as speech
+        const SILENCE_DURATION = 800; // 0.8 seconds of silence = stop (very fast)
+        const MIN_SPEECH_DURATION = 400; // Minimum 0.4s of speech required
         let hasSpeechStarted = false; // Track if real speech was detected
         let speechStartTime = null; // When speech started
         
