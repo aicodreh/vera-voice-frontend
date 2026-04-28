@@ -276,6 +276,12 @@
         const CONVERSATION_EXIT_DELAY = 8000; // 8 seconds of no interaction = exit conversation
         const EXIT_PHRASES = ['goodbye', 'bye', 'that\'s all', 'thanks vera', 'thank you vera', 'stop', 'exit', 'end conversation'];
         
+        // Interrupt detection - listen while Vera speaks
+        let interruptStream = null;
+        let interruptAnalyser = null;
+        let interruptCheckInterval = null;
+        const INTERRUPT_THRESHOLD = 40; // Must be loud to interrupt
+        
         // Porcupine Wake Word Detection
         async function initPorcupine() {
             try {
@@ -467,8 +473,70 @@
             speechStartTime = null;
         }
         
+        // Interrupt detection - allows user to interrupt Vera while speaking
+        async function startInterruptDetection() {
+            try {
+                interruptStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+                
+                interruptAnalyser = audioContext.createAnalyser();
+                interruptAnalyser.fftSize = 512;
+                
+                const source = audioContext.createMediaStreamSource(interruptStream);
+                source.connect(interruptAnalyser);
+                
+                let consecutiveLoudFrames = 0;
+                
+                interruptCheckInterval = setInterval(() => {
+                    if (!currentAudioSource) {
+                        stopInterruptDetection();
+                        return;
+                    }
+                    
+                    const dataArray = new Uint8Array(interruptAnalyser.frequencyBinCount);
+                    interruptAnalyser.getByteFrequencyData(dataArray);
+                    const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+                    
+                    if (average > INTERRUPT_THRESHOLD) {
+                        consecutiveLoudFrames++;
+                        // Require 3 consecutive loud frames to interrupt (avoid false triggers)
+                        if (consecutiveLoudFrames >= 3) {
+                            console.log('Interrupt detected! Stopping Vera and starting recording');
+                            stopInterruptDetection();
+                            stopCurrentAudio();
+                            startRecording();
+                        }
+                    } else {
+                        consecutiveLoudFrames = 0;
+                    }
+                }, 100);
+                
+            } catch (e) {
+                console.error('Failed to start interrupt detection:', e);
+            }
+        }
+        
+        function stopInterruptDetection() {
+            if (interruptCheckInterval) {
+                clearInterval(interruptCheckInterval);
+                interruptCheckInterval = null;
+            }
+            if (interruptStream) {
+                interruptStream.getTracks().forEach(track => track.stop());
+                interruptStream = null;
+            }
+            interruptAnalyser = null;
+        }
+        
         // Stop any currently playing audio
         function stopCurrentAudio() {
+            stopInterruptDetection();
             if (currentAudioSource) {
                 try {
                     currentAudioSource.stop();
@@ -818,6 +886,11 @@
                     }
                     micContainer.classList.add('speaking');
                     setStatus('Speaking', 'green');
+                    
+                    // Start listening for interrupts while Vera speaks
+                    if (wakeWordEnabled && conversationMode) {
+                        startInterruptDetection();
+                    }
                     
                     source.onended = () => {
                         currentAudioSource = null;
