@@ -218,6 +218,18 @@
         let lastAudioBlob = null;
         let currentStream = null;
         let audioContext = null;
+        let currentAudioSource = null;  // Track playing audio so we can stop it
+        
+        // Stop any currently playing audio
+        function stopCurrentAudio() {
+            if (currentAudioSource) {
+                try {
+                    currentAudioSource.stop();
+                } catch(e) {}
+                currentAudioSource = null;
+            }
+            micContainer.classList.remove('speaking');
+        }
         
         // Initialize audio context on first user interaction (iOS requirement)
         function initAudioContext() {
@@ -327,6 +339,9 @@
         // Start recording
         async function startRecording() {
             if (isProcessing) return;
+            
+            // Stop any playing audio first
+            stopCurrentAudio();
             
             // Clean up any previous recorder
             if (mediaRecorder) {
@@ -462,6 +477,9 @@
                     source.buffer = audioBuffer;
                     source.connect(audioContext.destination);
                     
+                    // Track current audio source so we can stop it
+                    currentAudioSource = source;
+                    
                     // Show message and update UI when playback starts
                     setProcessing(false);
                     if (veraResponse) {
@@ -471,6 +489,7 @@
                     setStatus('Speaking', 'green');
                     
                     source.onended = () => {
+                        currentAudioSource = null;
                         resetToReady();
                     };
                     
@@ -643,7 +662,11 @@
                 source.buffer = audioBuffer;
                 source.connect(audioContext.destination);
                 
+                // Track current audio source
+                currentAudioSource = source;
+                
                 source.onended = () => {
+                    currentAudioSource = null;
                     micContainer.classList.remove('speaking');
                 };
                 
