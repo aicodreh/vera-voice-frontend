@@ -259,6 +259,13 @@
         const MAX_RECORDING_TIME = 15000;
         let recordingTimeout = null;
         
+        // Silence detection for auto-stop
+        let silenceAnalyser = null;
+        let silenceCheckInterval = null;
+        let lastSoundTime = null;
+        const SILENCE_THRESHOLD = 15; // Volume below this = silence
+        const SILENCE_DURATION = 2000; // 2 seconds of silence = stop
+        
         // Porcupine Wake Word Detection
         async function initPorcupine() {
             try {
@@ -364,6 +371,55 @@
                 instruction.textContent = 'Type or hold mic to speak';
                 setStatus('Ready', 'green');
             }
+        }
+        
+        // Silence detection for auto-stop recording
+        function startSilenceDetection(stream) {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            
+            silenceAnalyser = audioContext.createAnalyser();
+            silenceAnalyser.fftSize = 512;
+            silenceAnalyser.smoothingTimeConstant = 0.8;
+            
+            const source = audioContext.createMediaStreamSource(stream);
+            source.connect(silenceAnalyser);
+            
+            lastSoundTime = Date.now();
+            
+            silenceCheckInterval = setInterval(() => {
+                if (!isRecording) {
+                    stopSilenceDetection();
+                    return;
+                }
+                
+                const dataArray = new Uint8Array(silenceAnalyser.frequencyBinCount);
+                silenceAnalyser.getByteFrequencyData(dataArray);
+                const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+                
+                if (average > SILENCE_THRESHOLD) {
+                    lastSoundTime = Date.now();
+                } else {
+                    // Check if silence duration exceeded
+                    if (Date.now() - lastSoundTime >= SILENCE_DURATION) {
+                        console.log('Silence detected, auto-stopping recording');
+                        stopSilenceDetection();
+                        stopRecording();
+                    }
+                }
+            }, 100);
+        }
+        
+        function stopSilenceDetection() {
+            if (silenceCheckInterval) {
+                clearInterval(silenceCheckInterval);
+                silenceCheckInterval = null;
+            }
+            silenceAnalyser = null;
         }
         
         // Stop any currently playing audio
@@ -594,8 +650,13 @@
                 micIcon.classList.add('hidden');
                 stopIcon.classList.remove('hidden');
                 waveformContainer.classList.remove('hidden');
-                instruction.textContent = 'Listening... (tap mic to send)';
+                instruction.textContent = wakeWordEnabled ? 'Listening... (auto-stops on silence)' : 'Listening... (tap mic to send)';
                 setStatus('Recording', 'teal');
+                
+                // Start silence detection for auto-stop (only in wake word mode)
+                if (wakeWordEnabled) {
+                    startSilenceDetection(stream);
+                }
                 
             } catch (e) {
                 console.error('Microphone error:', e);
@@ -610,6 +671,9 @@
                 clearTimeout(recordingTimeout);
                 recordingTimeout = null;
             }
+            
+            // Stop silence detection
+            stopSilenceDetection();
             
             if (mediaRecorder && isRecording) {
                 mediaRecorder.stop();
