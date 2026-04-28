@@ -265,6 +265,7 @@
                 console.log('Initializing Porcupine...');
                 
                 // Create Porcupine instance with custom "Hey Vera" keyword
+                // Using publicPath for model file (hosted alongside index.html)
                 porcupine = await PorcupineWeb.PorcupineWorker.create(
                     PICOVOICE_ACCESS_KEY,
                     [{
@@ -273,7 +274,8 @@
                     }],
                     keywordDetectionCallback,
                     {
-                        base64: await fetchPorcupineModel()
+                        publicPath: './porcupine_params.pv',
+                        forceWrite: true
                     }
                 );
                 
@@ -281,28 +283,8 @@
                 return true;
             } catch (e) {
                 console.error('Failed to initialize Porcupine:', e);
-                // Fall back to Web Speech API if Porcupine fails
+                console.error('Error details:', e.message);
                 return false;
-            }
-        }
-        
-        // Fetch the Porcupine model file
-        async function fetchPorcupineModel() {
-            // Use the default English model from CDN
-            const modelUrl = 'https://raw.githubusercontent.com/Picovoice/porcupine/master/lib/common/porcupine_params.pv';
-            try {
-                const response = await fetch(modelUrl);
-                const arrayBuffer = await response.arrayBuffer();
-                // Convert to base64
-                const uint8Array = new Uint8Array(arrayBuffer);
-                let binary = '';
-                for (let i = 0; i < uint8Array.length; i++) {
-                    binary += String.fromCharCode(uint8Array[i]);
-                }
-                return btoa(binary);
-            } catch (e) {
-                console.error('Failed to fetch Porcupine model:', e);
-                throw e;
             }
         }
         
