@@ -106,6 +106,9 @@
                 </div>
             </div>
             <div class="flex items-center gap-2">
+                <button id="clear-chat" class="text-xs px-3 py-1 rounded-full bg-gray-700/50 text-gray-400 hover:bg-red-500/30 hover:text-red-400 transition-colors" title="Clear chat history">
+                    🗑️
+                </button>
                 <button id="wake-toggle" class="text-xs px-3 py-1 rounded-full bg-gray-700/50 text-gray-400 hover:bg-gray-600/50 transition-colors" title="Enable 'Hey Vera' wake word">
                     🎤 Wake
                 </button>
@@ -215,6 +218,7 @@
         const textInput = document.getElementById('text-input');
         const sendBtn = document.getElementById('send-btn');
         const wakeToggle = document.getElementById('wake-toggle');
+        const clearChatBtn = document.getElementById('clear-chat');
         
         // State
         let mediaRecorder = null;
@@ -412,7 +416,48 @@
         }
         
         // Add message to chat
-        function addMessage(text, isUser = false) {
+        // Conversation history storage
+        const STORAGE_KEY = 'vera_chat_history';
+        
+        function saveHistory() {
+            const messages = [];
+            document.querySelectorAll('.message-bubble').forEach(bubble => {
+                const isUser = bubble.classList.contains('flex-row-reverse');
+                const text = bubble.querySelector('p')?.textContent || '';
+                const time = bubble.querySelector('.msg-time')?.textContent || '';
+                if (text && !text.includes("I'm Vera. Tap and hold")) {
+                    messages.push({ text, isUser, time });
+                }
+            });
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+        }
+        
+        function loadHistory() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const messages = JSON.parse(saved);
+                    messages.forEach(msg => addMessage(msg.text, msg.isUser, msg.time, false));
+                }
+            } catch (e) {
+                console.error('Error loading history:', e);
+            }
+        }
+        
+        function clearHistory() {
+            localStorage.removeItem(STORAGE_KEY);
+            // Remove all messages except welcome
+            const messages = chat.querySelectorAll('.message-bubble');
+            messages.forEach((msg, i) => {
+                if (i > 0) msg.remove();  // Keep first (welcome) message
+            });
+        }
+        
+        function formatTime(date) {
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        }
+        
+        function addMessage(text, isUser = false, timestamp = null, save = true) {
             const div = document.createElement('div');
             div.className = 'message-bubble flex gap-3' + (isUser ? ' flex-row-reverse' : '');
             
@@ -420,9 +465,11 @@
             avatar.className = `w-8 h-8 rounded-full overflow-hidden flex items-center justify-center flex-shrink-0 ${isUser ? 'bg-blue-500' : 'bg-black'}`;
             avatar.innerHTML = isUser ? '<span class="text-sm">👤</span>' : '<img src="vera-icon.jpg" alt="V" class="w-full h-full object-cover">';
             
+            const timeStr = timestamp || formatTime(new Date());
+            
             const bubble = document.createElement('div');
             bubble.className = `rounded-2xl px-4 py-3 max-w-[80%] ${isUser ? 'bg-blue-500/30 rounded-tr-sm' : 'bg-gray-800/50 rounded-tl-sm'}`;
-            bubble.innerHTML = `<p class="text-sm">${text}</p>`;
+            bubble.innerHTML = `<p class="text-sm">${text}</p><span class="msg-time text-[10px] text-gray-500 mt-1 block">${timeStr}</span>`;
             
             div.appendChild(avatar);
             div.appendChild(bubble);
@@ -430,6 +477,9 @@
             
             // Scroll to bottom
             chat.scrollTop = chat.scrollHeight;
+            
+            // Save to localStorage
+            if (save) saveHistory();
         }
         
         // Reset to ready state
@@ -807,6 +857,16 @@
             initAudioContext();  // Needed for iOS
             toggleWakeWord();
         });
+        
+        // Clear chat button
+        clearChatBtn.addEventListener('click', () => {
+            if (confirm('Clear chat history?')) {
+                clearHistory();
+            }
+        });
+        
+        // Load saved history on page load
+        loadHistory();
         
         // Initialize on load
         init();
