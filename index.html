@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vera Voice</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Picovoice Porcupine Web SDK -->
+    <script src="https://unpkg.com/@picovoice/porcupine-web@3.0.0/dist/iife/index.js"></script>
+    <script src="https://unpkg.com/@picovoice/web-voice-processor@4.0.0/dist/iife/index.js"></script>
     <style>
         body {
             background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
@@ -90,6 +93,16 @@
         .mic-btn:active {
             transform: scale(0.95);
         }
+        
+        /* Wake word listening indicator */
+        .wake-listening {
+            animation: wake-pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes wake-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.4); }
+            50% { box-shadow: 0 0 0 10px rgba(20, 184, 166, 0); }
+        }
     </style>
 </head>
 <body class="min-h-screen text-white flex flex-col">
@@ -107,7 +120,7 @@
             </div>
             <div class="flex items-center gap-2">
                 <button id="wake-toggle" class="text-xs px-3 py-1 rounded-full bg-gray-700/50 text-gray-400 hover:bg-gray-600/50 transition-colors" title="Enable 'Hey Vera' wake word">
-                    🎤 Wake
+                    🎤 Hey Vera
                 </button>
                 <div id="status" class="text-xs px-3 py-1 rounded-full bg-green-500/20 text-green-400">
                     Ready
@@ -136,7 +149,7 @@
                     <img src="vera-icon.jpg" alt="V" class="w-full h-full object-cover">
                 </div>
                 <div class="bg-gray-800/50 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[80%]">
-                    <p class="text-sm">Hello! I'm Vera. Tap and hold the microphone button to speak with me. Keep your message short (3-5 seconds) for best results.</p>
+                    <p class="text-sm">Hello! I'm Vera. Tap and hold the microphone button to speak with me, or enable "Hey Vera" wake word for hands-free interaction.</p>
                 </div>
             </div>
         </div>
@@ -203,24 +216,17 @@
             <p id="instruction" class="text-center text-gray-500 text-xs mt-2">
                 Type or hold mic to speak
             </p>
-            
-            <!-- Volume meter (only shows in always-listening mode) -->
-            <div id="volume-meter" class="hidden mt-2 flex justify-center items-center gap-1">
-                <span class="text-[10px] text-gray-500">Vol:</span>
-                <div class="w-24 h-2 bg-gray-700 rounded-full overflow-hidden">
-                    <div id="volume-bar" class="h-full bg-teal-500 transition-all duration-100" style="width: 0%"></div>
-                </div>
-                <span id="volume-value" class="text-[10px] text-gray-500 w-6">0</span>
-            </div>
-            
-
         </div>
     </footer>
 
     <script>
         // Configuration
         const API_URL = 'https://vera-voice-web-production.up.railway.app';
-        const TIMEOUT_MS = 30000; // 30 second timeout
+        const TIMEOUT_MS = 30000;
+        
+        // Picovoice Configuration
+        const PICOVOICE_ACCESS_KEY = 'Re/OEQlPq+daveRhjG4anO/l+jzXDCfhoAKgY7Bb007DV/80FW84Hw==';
+        const HEY_VERA_KEYWORD_BASE64 = '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';
         
         // DOM Elements
         const micBtn = document.getElementById('mic-btn');
@@ -238,389 +244,143 @@
         const clearChatBtn = document.getElementById('clear-chat');
         const settingsBtn = document.getElementById('settings-btn');
         const settingsMenu = document.getElementById('settings-menu');
-        const volumeMeter = document.getElementById('volume-meter');
-        const volumeBar = document.getElementById('volume-bar');
-        const volumeValue = document.getElementById('volume-value');
         
         // State
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
         let isProcessing = false;
-        let lastAudioBlob = null;
         let currentStream = null;
         let audioContext = null;
-        let currentAudioSource = null;  // Track playing audio so we can stop it
+        let currentAudioSource = null;
         let wakeWordEnabled = false;
-        let wakeWordRecognition = null;
-        const MAX_RECORDING_TIME = 15000; // 15 seconds max recording
+        let porcupine = null;
+        let webVoiceProcessor = null;
+        const MAX_RECORDING_TIME = 15000;
         let recordingTimeout = null;
         
-        // Always-listening mode state
-        let alwaysListening = false;
-        let listeningStream = null;
-        let analyser = null;
-        let silenceStart = null;
-        let speechStart = null;
-        let isSpeaking = false;
-        let alwaysListeningRecorder = null;
-        let alwaysListeningChunks = [];
-        const SILENCE_THRESHOLD = 10; // Volume level below this = silence
-        const SPEECH_THRESHOLD = 35; // Volume level above this = speech (raised to filter typing noise)
-        const SILENCE_DURATION = 1500; // 1.5s silence = end of speech
-        const MIN_SPEECH_DURATION = 600; // Minimum 0.6s speech to process
-        let speechConfirmCount = 0; // Require multiple frames above threshold
-        const SPEECH_CONFIRM_FRAMES = 3; // Need 3 consecutive frames to confirm speech
-        
-        // Wake word detection using Web Speech API
-        function initWakeWord() {
-            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                console.log('Wake word not supported in this browser');
-                wakeToggle.style.display = 'none';
+        // Porcupine Wake Word Detection
+        async function initPorcupine() {
+            try {
+                console.log('Initializing Porcupine...');
+                
+                // Create Porcupine instance with custom "Hey Vera" keyword
+                porcupine = await PorcupineWeb.PorcupineWorker.create(
+                    PICOVOICE_ACCESS_KEY,
+                    [{
+                        base64: HEY_VERA_KEYWORD_BASE64,
+                        label: 'Hey Vera'
+                    }],
+                    keywordDetectionCallback,
+                    {
+                        base64: await fetchPorcupineModel()
+                    }
+                );
+                
+                console.log('Porcupine initialized successfully');
+                return true;
+            } catch (e) {
+                console.error('Failed to initialize Porcupine:', e);
+                // Fall back to Web Speech API if Porcupine fails
                 return false;
             }
-            
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            wakeWordRecognition = new SpeechRecognition();
-            wakeWordRecognition.continuous = true;
-            wakeWordRecognition.interimResults = true;
-            wakeWordRecognition.lang = 'en-US';
-            
-            wakeWordRecognition.onresult = (event) => {
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript.toLowerCase().trim();
-                    console.log('Wake word heard:', transcript);
+        }
+        
+        // Fetch the Porcupine model file
+        async function fetchPorcupineModel() {
+            // Use the default English model from CDN
+            const modelUrl = 'https://raw.githubusercontent.com/Picovoice/porcupine/master/lib/common/porcupine_params.pv';
+            try {
+                const response = await fetch(modelUrl);
+                const arrayBuffer = await response.arrayBuffer();
+                // Convert to base64
+                const uint8Array = new Uint8Array(arrayBuffer);
+                let binary = '';
+                for (let i = 0; i < uint8Array.length; i++) {
+                    binary += String.fromCharCode(uint8Array[i]);
+                }
+                return btoa(binary);
+            } catch (e) {
+                console.error('Failed to fetch Porcupine model:', e);
+                throw e;
+            }
+        }
+        
+        // Callback when wake word is detected
+        function keywordDetectionCallback(detection) {
+            if (detection.index >= 0) {
+                console.log('Wake word detected: Hey Vera!');
+                
+                if (!isRecording && !isProcessing) {
+                    // Haptic feedback
+                    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
                     
-                    // Check for wake words
-                    if (transcript.includes('hey vera') || 
-                        transcript.includes('hi vera') || 
-                        transcript.includes('okay vera') ||
-                        transcript.includes('vera') && transcript.length < 15) {
-                        
-                        if (!isRecording && !isProcessing) {
-                            console.log('Wake word detected! Starting recording...');
-                            // Stop wake word listening temporarily
-                            stopWakeWordListening();
-                            // Visual feedback
-                            if (navigator.vibrate) navigator.vibrate(100);
-                            // Start recording with auto-stop
-                            startRecording();
-                            // Auto-stop after max time
-                            recordingTimeout = setTimeout(() => {
-                                if (isRecording) {
-                                    console.log('Max recording time reached');
-                                    stopRecording();
-                                }
-                            }, MAX_RECORDING_TIME);
+                    // Visual feedback
+                    micBtn.classList.add('wake-listening');
+                    setTimeout(() => micBtn.classList.remove('wake-listening'), 500);
+                    
+                    // Start recording
+                    startRecording();
+                    
+                    // Auto-stop after max time
+                    recordingTimeout = setTimeout(() => {
+                        if (isRecording) {
+                            console.log('Max recording time reached');
+                            stopRecording();
                         }
-                        break;
-                    }
-                }
-            };
-            
-            wakeWordRecognition.onerror = (event) => {
-                console.log('Wake word error:', event.error);
-                if (event.error === 'no-speech' || event.error === 'audio-capture') {
-                    // Restart listening
-                    if (wakeWordEnabled) {
-                        setTimeout(() => startWakeWordListening(), 500);
-                    }
-                }
-            };
-            
-            wakeWordRecognition.onend = () => {
-                // Restart if still enabled
-                if (wakeWordEnabled && !isRecording && !isProcessing) {
-                    setTimeout(() => startWakeWordListening(), 500);
-                }
-            };
-            
-            return true;
-        }
-        
-        function startWakeWordListening() {
-            if (wakeWordRecognition && wakeWordEnabled && !isRecording && !isProcessing) {
-                try {
-                    wakeWordRecognition.start();
-                    console.log('Wake word listening started');
-                } catch (e) {
-                    console.log('Wake word already listening');
+                    }, MAX_RECORDING_TIME);
                 }
             }
         }
         
-        function stopWakeWordListening() {
-            if (wakeWordRecognition) {
-                try {
-                    wakeWordRecognition.stop();
-                } catch (e) {}
+        async function startWakeWordListening() {
+            if (!porcupine) {
+                const success = await initPorcupine();
+                if (!success) {
+                    console.error('Could not initialize wake word detection');
+                    setStatus('Wake Error', 'red');
+                    return;
+                }
             }
-        }
-        
-        // Always-listening mode with voice activity detection
-        async function startAlwaysListening() {
-            if (alwaysListening || isProcessing) return;
             
             try {
-                // Get microphone stream
-                listeningStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                
-                // Create audio context for volume analysis
-                if (!audioContext) {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                }
-                if (audioContext.state === 'suspended') {
-                    await audioContext.resume();
-                }
-                
-                // Create analyser node
-                analyser = audioContext.createAnalyser();
-                analyser.fftSize = 512;
-                analyser.smoothingTimeConstant = 0.8;
-                
-                const source = audioContext.createMediaStreamSource(listeningStream);
-                source.connect(analyser);
-                
-                alwaysListening = true;
-                isSpeaking = false;
-                silenceStart = null;
-                speechStart = null;
-                
-                // Update UI
+                // Start the Web Voice Processor to feed audio to Porcupine
+                webVoiceProcessor = await WebVoiceProcessor.WebVoiceProcessor.subscribe(porcupine);
+                console.log('Wake word listening started');
                 setStatus('Listening...', 'teal');
-                instruction.textContent = 'Speak anytime...';
-                
-                // Start monitoring volume
-                monitorVolume();
-                
-                console.log('Always-listening mode started');
-                
+                instruction.textContent = 'Say "Hey Vera"...';
             } catch (e) {
-                console.error('Failed to start always-listening:', e);
+                console.error('Failed to start wake word listening:', e);
                 setStatus('Mic Error', 'red');
             }
         }
         
-        function stopAlwaysListening() {
-            alwaysListening = false;
-            isSpeaking = false;
-            
-            if (listeningStream) {
-                listeningStream.getTracks().forEach(track => track.stop());
-                listeningStream = null;
-            }
-            
-            if (alwaysListeningRecorder) {
-                try { alwaysListeningRecorder.stop(); } catch(e) {}
-                alwaysListeningRecorder = null;
-            }
-            
-            alwaysListeningChunks = [];
-            analyser = null;
-            
-            console.log('Always-listening mode stopped');
-        }
-        
-        function monitorVolume() {
-            if (!alwaysListening || !analyser) return;
-            
-            const dataArray = new Uint8Array(analyser.frequencyBinCount);
-            analyser.getByteFrequencyData(dataArray);
-            
-            // Calculate average volume
-            const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-            
-            // Update volume meter
-            const pct = Math.min(100, (average / 60) * 100);
-            volumeBar.style.width = pct + '%';
-            volumeValue.textContent = Math.round(average);
-            
-            // Color based on threshold
-            if (average > SPEECH_THRESHOLD) {
-                volumeBar.classList.remove('bg-teal-500');
-                volumeBar.classList.add('bg-green-500');
-            } else {
-                volumeBar.classList.remove('bg-green-500');
-                volumeBar.classList.add('bg-teal-500');
-            }
-            
-            const now = Date.now();
-            
-            if (average > SPEECH_THRESHOLD) {
-                // Require multiple consecutive frames above threshold to confirm speech
-                speechConfirmCount++;
-                
-                if (speechConfirmCount >= SPEECH_CONFIRM_FRAMES && !isSpeaking) {
-                    // If Vera is currently speaking, this might be her audio coming through speakers
-                    // Only interrupt if volume is MUCH higher (real human speaking)
-                    if (currentAudioSource) {
-                        if (average > SPEECH_THRESHOLD + 15) {
-                            console.log('Interrupting Vera (loud speech detected)...');
-                            stopCurrentAudio();
-                        } else {
-                            // Probably Vera's audio, ignore
-                            return requestAnimationFrame(monitorVolume);
-                        }
-                    }
-                    
-                    // If processing, don't start new recording
-                    if (isProcessing) {
-                        silenceStart = null;
-                        speechConfirmCount = 0;
-                        return requestAnimationFrame(monitorVolume);
-                    }
-                    
-                    // Start of speech (confirmed)
-                    isSpeaking = true;
-                    speechStart = now;
-                    silenceStart = null;
-                    
-                    console.log('Speech started (confirmed)');
-                    
-                    // Start recording
-                    startAlwaysListeningRecording();
-                    
-                    // UI feedback
-                    micContainer.classList.add('recording');
-                    waveformContainer.classList.remove('hidden');
-                    instruction.textContent = 'Listening...';
-                }
-                // Reset silence timer
-                silenceStart = null;
-            } else if (average < SILENCE_THRESHOLD) {
-                // Reset speech confirmation counter when below threshold
-                speechConfirmCount = 0;
-                // Silence detected
-                if (isSpeaking) {
-                    if (!silenceStart) {
-                        silenceStart = now;
-                    } else if (now - silenceStart >= SILENCE_DURATION) {
-                        // Silence long enough - end of speech
-                        const speechDuration = now - speechStart;
-                        
-                        if (speechDuration >= MIN_SPEECH_DURATION) {
-                            console.log('Speech ended after', speechDuration, 'ms');
-                            endAlwaysListeningRecording();
-                        } else {
-                            console.log('Speech too short, ignoring');
-                            cancelAlwaysListeningRecording();
-                        }
-                        
-                        isSpeaking = false;
-                        speechStart = null;
-                        silenceStart = null;
-                    }
+        async function stopWakeWordListening() {
+            if (webVoiceProcessor) {
+                try {
+                    await WebVoiceProcessor.WebVoiceProcessor.unsubscribe(porcupine);
+                    webVoiceProcessor = null;
+                } catch (e) {
+                    console.error('Error stopping wake word listener:', e);
                 }
             }
-            
-            // Continue monitoring
-            if (alwaysListening) {
-                requestAnimationFrame(monitorVolume);
-            }
         }
         
-        function startAlwaysListeningRecording() {
-            if (!listeningStream) return;
-            
-            alwaysListeningChunks = [];
-            
-            let options = {};
-            if (MediaRecorder.isTypeSupported('audio/webm')) {
-                options.mimeType = 'audio/webm';
-            }
-            
-            alwaysListeningRecorder = new MediaRecorder(listeningStream, options);
-            
-            alwaysListeningRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0) {
-                    alwaysListeningChunks.push(e.data);
-                }
-            };
-            
-            alwaysListeningRecorder.start(100);
-        }
-        
-        function cancelAlwaysListeningRecording() {
-            if (alwaysListeningRecorder) {
-                try { alwaysListeningRecorder.stop(); } catch(e) {}
-                alwaysListeningRecorder = null;
-            }
-            alwaysListeningChunks = [];
-            
-            micContainer.classList.remove('recording');
-            waveformContainer.classList.add('hidden');
-            instruction.textContent = 'Speak anytime...';
-        }
-        
-        async function endAlwaysListeningRecording() {
-            if (!alwaysListeningRecorder) return;
-            
-            // Stop recorder and wait for final data
-            const recorder = alwaysListeningRecorder;
-            alwaysListeningRecorder = null;
-            
-            return new Promise((resolve) => {
-                recorder.onstop = async () => {
-                    const audioBlob = new Blob(alwaysListeningChunks, { type: recorder.mimeType || 'audio/webm' });
-                    alwaysListeningChunks = [];
-                    
-                    // UI updates
-                    micContainer.classList.remove('recording');
-                    waveformContainer.classList.add('hidden');
-                    
-                    // Process if we have enough audio (at least 3KB for meaningful speech)
-                    if (audioBlob.size > 3000) {
-                        // Pause listening while processing
-                        const wasListening = alwaysListening;
-                        
-                        setProcessing(true);
-                        instruction.textContent = 'Processing...';
-                        setStatus('Processing', 'yellow');
-                        
-                        try {
-                            await sendAudio(audioBlob);
-                        } catch (e) {
-                            console.error('Audio send error:', e);
-                        }
-                        
-                        // Resume listening after response is done
-                        setProcessing(false);
-                        if (wasListening && wakeWordEnabled) {
-                            instruction.textContent = 'Speak anytime...';
-                            setStatus('Listening...', 'teal');
-                        }
-                    } else {
-                        console.log('Audio too short, skipping:', audioBlob.size);
-                        instruction.textContent = 'Speak anytime...';
-                    }
-                    
-                    resolve();
-                };
-                
-                recorder.stop();
-            });
-        }
-        
-        function toggleWakeWord() {
+        async function toggleWakeWord() {
             wakeWordEnabled = !wakeWordEnabled;
             
             if (wakeWordEnabled) {
-                // Start always-listening mode
-                startAlwaysListening();
                 wakeToggle.classList.remove('bg-gray-700/50', 'text-gray-400');
                 wakeToggle.classList.add('bg-teal-500/30', 'text-teal-400');
-                wakeToggle.innerHTML = '🎤 Always On';
-                volumeMeter.classList.remove('hidden');
+                wakeToggle.innerHTML = '🎤 Listening';
+                await startWakeWordListening();
             } else {
-                // Stop always-listening mode
-                stopAlwaysListening();
-                stopWakeWordListening();
                 wakeToggle.classList.remove('bg-teal-500/30', 'text-teal-400');
                 wakeToggle.classList.add('bg-gray-700/50', 'text-gray-400');
-                wakeToggle.innerHTML = '🎤 Auto';
-                instruction.textContent = 'Hold to speak';
+                wakeToggle.innerHTML = '🎤 Hey Vera';
+                await stopWakeWordListening();
+                instruction.textContent = 'Type or hold mic to speak';
                 setStatus('Ready', 'green');
-                volumeMeter.classList.add('hidden');
             }
         }
         
@@ -635,7 +395,7 @@
             micContainer.classList.remove('speaking');
         }
         
-        // Initialize audio context on first user interaction (iOS requirement)
+        // Initialize audio context
         function initAudioContext() {
             if (!audioContext) {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -680,8 +440,6 @@
             }
         }
         
-
-        
         // Set processing state
         function setProcessing(processing) {
             isProcessing = processing;
@@ -698,7 +456,6 @@
             }
         }
         
-        // Add message to chat
         // Conversation history storage
         const STORAGE_KEY = 'vera_chat_history';
         
@@ -729,10 +486,9 @@
         
         function clearHistory() {
             localStorage.removeItem(STORAGE_KEY);
-            // Remove all messages except welcome
             const messages = chat.querySelectorAll('.message-bubble');
             messages.forEach((msg, i) => {
-                if (i > 0) msg.remove();  // Keep first (welcome) message
+                if (i > 0) msg.remove();
             });
         }
         
@@ -758,16 +514,13 @@
             div.appendChild(bubble);
             chat.appendChild(div);
             
-            // Scroll to bottom
             chat.scrollTop = chat.scrollHeight;
             
-            // Save to localStorage
             if (save) saveHistory();
         }
         
         // Reset to ready state
         function resetToReady() {
-            // Clean up old recorder/stream
             if (mediaRecorder) {
                 try { mediaRecorder.stop(); } catch(e) {}
                 mediaRecorder = null;
@@ -783,20 +536,13 @@
             micContainer.classList.remove('recording', 'speaking');
             waveformContainer.classList.add('hidden');
             
-            // Restore state based on always-listening mode
-            if (wakeWordEnabled && alwaysListening) {
-                instruction.textContent = 'Speak anytime...';
+            if (wakeWordEnabled) {
+                instruction.textContent = 'Say "Hey Vera"...';
                 setStatus('Listening...', 'teal');
-            } else if (wakeWordEnabled) {
-                // Restart always-listening if it was enabled
-                setTimeout(() => {
-                    if (wakeWordEnabled && !alwaysListening && !isProcessing) {
-                        startAlwaysListening();
-                    }
-                }, 1000);
-                instruction.textContent = 'Resuming...';
+                // Resume wake word listening after response
+                startWakeWordListening();
             } else {
-                instruction.textContent = 'Hold to speak';
+                instruction.textContent = 'Type or hold mic to speak';
                 setStatus('Ready', 'green');
             }
         }
@@ -807,6 +553,11 @@
             
             // Stop any playing audio first
             stopCurrentAudio();
+            
+            // Pause wake word listening during recording
+            if (wakeWordEnabled) {
+                await stopWakeWordListening();
+            }
             
             // Clean up any previous recorder
             if (mediaRecorder) {
@@ -819,13 +570,11 @@
             }
             
             try {
-                
                 audioChunks = [];
                 
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 currentStream = stream;
                 
-                // Try webm first, fall back to default
                 let options = {};
                 if (MediaRecorder.isTypeSupported('audio/webm')) {
                     options.mimeType = 'audio/webm';
@@ -841,15 +590,12 @@
                 
                 mediaRecorder.onstop = async () => {
                     const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-                    lastAudioBlob = audioBlob;
                     
-                    // Stop tracks
                     if (currentStream) {
                         currentStream.getTracks().forEach(track => track.stop());
                         currentStream = null;
                     }
                     
-                    // Only process if we have meaningful audio (> 1KB)
                     if (audioBlob.size > 1000) {
                         await sendAudio(audioBlob);
                     } else {
@@ -858,7 +604,7 @@
                     }
                 };
                 
-                mediaRecorder.start(100); // Collect data every 100ms
+                mediaRecorder.start(100);
                 isRecording = true;
                 
                 // UI updates
@@ -878,7 +624,6 @@
         
         // Stop recording
         function stopRecording() {
-            // Clear any auto-stop timeout
             if (recordingTimeout) {
                 clearTimeout(recordingTimeout);
                 recordingTimeout = null;
@@ -888,7 +633,6 @@
                 mediaRecorder.stop();
                 isRecording = false;
                 
-                // UI updates
                 micContainer.classList.remove('recording');
                 waveformContainer.classList.add('hidden');
                 instruction.textContent = 'Processing...';
@@ -897,7 +641,7 @@
             }
         }
         
-        // Send audio to API with timeout
+        // Send audio to API
         async function sendAudio(audioBlob) {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => {
@@ -921,20 +665,16 @@
                     throw new Error(`API error: ${errorText}`);
                 }
                 
-                // Get metadata from headers
                 const userText = decodeURIComponent(response.headers.get('X-User-Text') || '');
                 const veraResponse = decodeURIComponent(response.headers.get('X-Vera-Response') || '');
                 
-                // Add user message
                 if (userText) {
                     addMessage(userText, true);
                 }
                 
-                // Play audio response using Web Audio API (better iOS support)
                 const audioBlob2 = await response.blob();
                 const arrayBuffer = await audioBlob2.arrayBuffer();
                 
-                // Ensure audio context is ready
                 if (!audioContext) {
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 }
@@ -948,10 +688,8 @@
                     source.buffer = audioBuffer;
                     source.connect(audioContext.destination);
                     
-                    // Track current audio source so we can stop it
                     currentAudioSource = source;
                     
-                    // Show message and update UI when playback starts
                     setProcessing(false);
                     if (veraResponse) {
                         addMessage(veraResponse, false);
@@ -967,7 +705,6 @@
                     source.start(0);
                 } catch (audioError) {
                     console.error('Audio decode/play error:', audioError);
-                    // Fallback: just show text response
                     setProcessing(false);
                     if (veraResponse) {
                         addMessage(veraResponse, false);
@@ -981,29 +718,19 @@
                 
                 resetToReady();
                 
-                // Only show error for timeouts, silently fail for other errors in always-listening mode
                 if (e.name === 'AbortError') {
                     setStatus('Timeout', 'red');
                     addMessage('Request timed out. Please try a shorter message.', false);
-                } else if (!wakeWordEnabled) {
-                    // Only show error message if NOT in always-listening mode
+                } else {
                     setStatus('Error', 'red');
                     addMessage('Sorry, there was an error processing your request. Please try again.', false);
-                } else {
-                    // In always-listening mode, just log and continue
-                    console.log('Skipping error message in always-listening mode');
-                    setStatus('Listening...', 'teal');
-                    instruction.textContent = 'Speak anytime...';
                 }
-                
-                
             }
         }
         
-        // Event listeners - hold to talk OR tap to stop (wake word mode)
+        // Event listeners
         micBtn.addEventListener('mousedown', (e) => {
             e.preventDefault();
-            // If already recording (from wake word), click to stop
             if (isRecording) {
                 stopRecording();
                 return;
@@ -1012,24 +739,20 @@
         });
         micBtn.addEventListener('mouseup', (e) => {
             e.preventDefault();
-            // Only stop on mouseup if NOT in wake word mode
             if (isRecording && !wakeWordEnabled) {
                 stopRecording();
             }
         });
         micBtn.addEventListener('mouseleave', () => {
-            // Only stop on mouseleave if NOT in wake word mode
             if (isRecording && !wakeWordEnabled) stopRecording();
         });
         
-        // Touch events for mobile - with better responsiveness
+        // Touch events for mobile
         micBtn.addEventListener('touchstart', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            // Initialize audio context on touch (iOS requirement)
             initAudioContext();
             
-            // If already recording (from wake word), tap to stop
             if (isRecording) {
                 if (navigator.vibrate) navigator.vibrate(50);
                 stopRecording();
@@ -1037,7 +760,6 @@
             }
             
             if (!isProcessing) {
-                // Vibrate for haptic feedback if supported
                 if (navigator.vibrate) navigator.vibrate(50);
                 startRecording();
             }
@@ -1046,28 +768,15 @@
         micBtn.addEventListener('touchend', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            // Only stop on touchend if we're NOT in wake word mode recording
-            // (wake word mode uses tap-to-stop, not hold-to-talk)
             if (isRecording && !wakeWordEnabled) {
                 stopRecording();
             }
         }, { passive: false });
         
-        // Prevent context menu on long press
         micBtn.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             return false;
         });
-        
-        // Prevent double-tap zoom on iOS
-        let lastTouchEnd = 0;
-        micBtn.addEventListener('touchend', (e) => {
-            const now = Date.now();
-            if (now - lastTouchEnd <= 300) {
-                e.preventDefault();
-            }
-            lastTouchEnd = now;
-        }, { passive: false });
         
         // Text input handling
         textInput.addEventListener('input', () => {
@@ -1090,20 +799,16 @@
             const text = textInput.value.trim();
             if (!text || isProcessing) return;
             
-            // Clear input
             textInput.value = '';
             sendBtn.disabled = true;
             
-            // Add user message
             addMessage(text, true);
             
-            // Set processing state
             setProcessing(true);
             setStatus('Processing', 'yellow');
             instruction.textContent = 'Thinking...';
             
             try {
-                // Send text to API
                 const response = await fetch(`${API_URL}/api/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1117,16 +822,9 @@
                 const data = await response.json();
                 const veraResponse = data.response || data.text || 'I received your message.';
                 
-                // Add Vera's response
                 addMessage(veraResponse, false);
                 
-                // Play TTS if audio is returned
-                if (data.audio_url) {
-                    await playAudioFromUrl(data.audio_url);
-                } else {
-                    // Generate TTS for the response
-                    await speakResponse(veraResponse);
-                }
+                await speakResponse(veraResponse);
                 
             } catch (e) {
                 console.error('Text send error:', e);
@@ -1166,7 +864,6 @@
                     source.buffer = audioBuffer;
                     source.connect(audioContext.destination);
                     
-                    // Track current audio source
                     currentAudioSource = source;
                     
                     source.onended = () => {
@@ -1187,24 +884,22 @@
         
         // Wake word toggle
         wakeToggle.addEventListener('click', () => {
-            initAudioContext();  // Needed for iOS
+            initAudioContext();
             toggleWakeWord();
         });
         
-        // Settings menu toggle
+        // Settings menu
         settingsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             settingsMenu.classList.toggle('hidden');
         });
         
-        // Close settings menu when clicking outside
         document.addEventListener('click', (e) => {
             if (!settingsMenu.contains(e.target) && e.target !== settingsBtn) {
                 settingsMenu.classList.add('hidden');
             }
         });
         
-        // Clear chat button (inside settings)
         clearChatBtn.addEventListener('click', () => {
             if (confirm('Clear chat history?')) {
                 clearHistory();
@@ -1212,10 +907,8 @@
             }
         });
         
-        // Load saved history on page load
+        // Load history and initialize
         loadHistory();
-        
-        // Initialize on load
         init();
     </script>
 </body>
