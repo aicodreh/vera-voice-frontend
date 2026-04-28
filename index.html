@@ -266,6 +266,12 @@
         const SILENCE_THRESHOLD = 15; // Volume below this = silence
         const SILENCE_DURATION = 2000; // 2 seconds of silence = stop
         
+        // Conversation mode - continuous back-and-forth
+        let conversationMode = false;
+        let conversationTimeout = null;
+        const CONVERSATION_EXIT_DELAY = 8000; // 8 seconds of no interaction = exit conversation
+        const EXIT_PHRASES = ['goodbye', 'bye', 'that\'s all', 'thanks vera', 'thank you vera', 'stop', 'exit', 'end conversation'];
+        
         // Porcupine Wake Word Detection
         async function initPorcupine() {
             try {
@@ -307,6 +313,10 @@
                     // Visual feedback
                     micBtn.classList.add('wake-listening');
                     setTimeout(() => micBtn.classList.remove('wake-listening'), 500);
+                    
+                    // Enable conversation mode - will auto-continue after responses
+                    conversationMode = true;
+                    console.log('Conversation mode enabled');
                     
                     // Start recording
                     startRecording();
@@ -367,6 +377,7 @@
                 wakeToggle.classList.remove('bg-teal-500/30', 'text-teal-400');
                 wakeToggle.classList.add('bg-gray-700/50', 'text-gray-400');
                 wakeToggle.innerHTML = '🎤 Hey Vera';
+                conversationMode = false; // Reset conversation mode
                 await stopWakeWordListening();
                 instruction.textContent = 'Type or hold mic to speak';
                 setStatus('Ready', 'green');
@@ -575,8 +586,13 @@
             waveformContainer.classList.add('hidden');
             
             if (wakeWordEnabled) {
-                instruction.textContent = 'Say "Hey Vera"...';
-                setStatus('Listening...', 'teal');
+                if (conversationMode) {
+                    instruction.textContent = 'Conversation active - listening...';
+                    setStatus('In Conversation', 'teal');
+                } else {
+                    instruction.textContent = 'Say "Hey Vera"...';
+                    setStatus('Listening...', 'teal');
+                }
                 // Resume wake word listening after response
                 startWakeWordListening();
             } else {
@@ -672,6 +688,11 @@
                 recordingTimeout = null;
             }
             
+            if (conversationTimeout) {
+                clearTimeout(conversationTimeout);
+                conversationTimeout = null;
+            }
+            
             // Stop silence detection
             stopSilenceDetection();
             
@@ -716,6 +737,13 @@
                 
                 if (userText) {
                     addMessage(userText, true);
+                    
+                    // Check for exit phrases to end conversation mode
+                    const lowerText = userText.toLowerCase();
+                    if (EXIT_PHRASES.some(phrase => lowerText.includes(phrase))) {
+                        console.log('Exit phrase detected, ending conversation mode');
+                        conversationMode = false;
+                    }
                 }
                 
                 const audioBlob2 = await response.blob();
@@ -745,7 +773,33 @@
                     
                     source.onended = () => {
                         currentAudioSource = null;
-                        resetToReady();
+                        
+                        // In conversation mode, auto-start recording for follow-up
+                        if (wakeWordEnabled && conversationMode) {
+                            console.log('Conversation mode: auto-starting recording for follow-up');
+                            micContainer.classList.remove('speaking');
+                            setStatus('Your turn...', 'teal');
+                            instruction.textContent = 'Listening for follow-up...';
+                            
+                            // Small delay before starting to record
+                            setTimeout(() => {
+                                if (wakeWordEnabled && conversationMode && !isRecording && !isProcessing) {
+                                    startRecording();
+                                    
+                                    // Set conversation timeout - if no response, exit conversation mode
+                                    conversationTimeout = setTimeout(() => {
+                                        if (isRecording) {
+                                            console.log('Conversation timeout - no speech detected');
+                                            stopRecording();
+                                            conversationMode = false;
+                                            instruction.textContent = 'Say "Hey Vera" to start...';
+                                        }
+                                    }, CONVERSATION_EXIT_DELAY);
+                                }
+                            }, 500);
+                        } else {
+                            resetToReady();
+                        }
                     };
                     
                     source.start(0);
