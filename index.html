@@ -204,6 +204,15 @@
                 Type or hold mic to speak
             </p>
             
+            <!-- Volume meter (only shows in always-listening mode) -->
+            <div id="volume-meter" class="hidden mt-2 flex justify-center items-center gap-1">
+                <span class="text-[10px] text-gray-500">Vol:</span>
+                <div class="w-24 h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div id="volume-bar" class="h-full bg-teal-500 transition-all duration-100" style="width: 0%"></div>
+                </div>
+                <span id="volume-value" class="text-[10px] text-gray-500 w-6">0</span>
+            </div>
+            
 
         </div>
     </footer>
@@ -229,6 +238,9 @@
         const clearChatBtn = document.getElementById('clear-chat');
         const settingsBtn = document.getElementById('settings-btn');
         const settingsMenu = document.getElementById('settings-menu');
+        const volumeMeter = document.getElementById('volume-meter');
+        const volumeBar = document.getElementById('volume-bar');
+        const volumeValue = document.getElementById('volume-value');
         
         // State
         let mediaRecorder = null;
@@ -253,10 +265,10 @@
         let isSpeaking = false;
         let alwaysListeningRecorder = null;
         let alwaysListeningChunks = [];
-        const SILENCE_THRESHOLD = 8; // Volume level below this = silence
-        const SPEECH_THRESHOLD = 40; // Volume level above this = speech (raised more to avoid noise)
-        const SILENCE_DURATION = 2000; // 2s silence = end of speech
-        const MIN_SPEECH_DURATION = 1000; // Minimum 1s speech to process
+        const SILENCE_THRESHOLD = 10; // Volume level below this = silence
+        const SPEECH_THRESHOLD = 20; // Volume level above this = speech
+        const SILENCE_DURATION = 1500; // 1.5s silence = end of speech
+        const MIN_SPEECH_DURATION = 600; // Minimum 0.6s speech to process
         
         // Wake word detection using Web Speech API
         function initWakeWord() {
@@ -415,6 +427,20 @@
             
             // Calculate average volume
             const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+            
+            // Update volume meter
+            const pct = Math.min(100, (average / 60) * 100);
+            volumeBar.style.width = pct + '%';
+            volumeValue.textContent = Math.round(average);
+            
+            // Color based on threshold
+            if (average > SPEECH_THRESHOLD) {
+                volumeBar.classList.remove('bg-teal-500');
+                volumeBar.classList.add('bg-green-500');
+            } else {
+                volumeBar.classList.remove('bg-green-500');
+                volumeBar.classList.add('bg-teal-500');
+            }
             
             const now = Date.now();
             
@@ -578,6 +604,7 @@
                 wakeToggle.classList.remove('bg-gray-700/50', 'text-gray-400');
                 wakeToggle.classList.add('bg-teal-500/30', 'text-teal-400');
                 wakeToggle.innerHTML = '🎤 Always On';
+                volumeMeter.classList.remove('hidden');
             } else {
                 // Stop always-listening mode
                 stopAlwaysListening();
@@ -587,6 +614,7 @@
                 wakeToggle.innerHTML = '🎤 Auto';
                 instruction.textContent = 'Hold to speak';
                 setStatus('Ready', 'green');
+                volumeMeter.classList.add('hidden');
             }
         }
         
