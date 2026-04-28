@@ -253,10 +253,10 @@
         let isSpeaking = false;
         let alwaysListeningRecorder = null;
         let alwaysListeningChunks = [];
-        const SILENCE_THRESHOLD = 10; // Volume level below this = silence
-        const SPEECH_THRESHOLD = 30; // Volume level above this = speech (raised to avoid noise)
-        const SILENCE_DURATION = 1800; // 1.8s silence = end of speech
-        const MIN_SPEECH_DURATION = 800; // Minimum 0.8s speech to process
+        const SILENCE_THRESHOLD = 8; // Volume level below this = silence
+        const SPEECH_THRESHOLD = 40; // Volume level above this = speech (raised more to avoid noise)
+        const SILENCE_DURATION = 2000; // 2s silence = end of speech
+        const MIN_SPEECH_DURATION = 1000; // Minimum 1s speech to process
         
         // Wake word detection using Web Speech API
         function initWakeWord() {
@@ -421,10 +421,16 @@
             if (average > SPEECH_THRESHOLD) {
                 // Speech detected
                 if (!isSpeaking) {
-                    // If Vera is speaking, interrupt her
+                    // If Vera is currently speaking, this might be her audio coming through speakers
+                    // Only interrupt if volume is MUCH higher (real human speaking)
                     if (currentAudioSource) {
-                        console.log('Interrupting Vera...');
-                        stopCurrentAudio();
+                        if (average > SPEECH_THRESHOLD + 20) {
+                            console.log('Interrupting Vera (loud speech detected)...');
+                            stopCurrentAudio();
+                        } else {
+                            // Probably Vera's audio, ignore
+                            return requestAnimationFrame(monitorVolume);
+                        }
                     }
                     
                     // If processing, don't start new recording
