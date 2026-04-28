@@ -266,9 +266,11 @@
         let alwaysListeningRecorder = null;
         let alwaysListeningChunks = [];
         const SILENCE_THRESHOLD = 10; // Volume level below this = silence
-        const SPEECH_THRESHOLD = 20; // Volume level above this = speech
+        const SPEECH_THRESHOLD = 35; // Volume level above this = speech (raised to filter typing noise)
         const SILENCE_DURATION = 1500; // 1.5s silence = end of speech
         const MIN_SPEECH_DURATION = 600; // Minimum 0.6s speech to process
+        let speechConfirmCount = 0; // Require multiple frames above threshold
+        const SPEECH_CONFIRM_FRAMES = 3; // Need 3 consecutive frames to confirm speech
         
         // Wake word detection using Web Speech API
         function initWakeWord() {
@@ -445,12 +447,14 @@
             const now = Date.now();
             
             if (average > SPEECH_THRESHOLD) {
-                // Speech detected
-                if (!isSpeaking) {
+                // Require multiple consecutive frames above threshold to confirm speech
+                speechConfirmCount++;
+                
+                if (speechConfirmCount >= SPEECH_CONFIRM_FRAMES && !isSpeaking) {
                     // If Vera is currently speaking, this might be her audio coming through speakers
                     // Only interrupt if volume is MUCH higher (real human speaking)
                     if (currentAudioSource) {
-                        if (average > SPEECH_THRESHOLD + 20) {
+                        if (average > SPEECH_THRESHOLD + 15) {
                             console.log('Interrupting Vera (loud speech detected)...');
                             stopCurrentAudio();
                         } else {
@@ -462,15 +466,16 @@
                     // If processing, don't start new recording
                     if (isProcessing) {
                         silenceStart = null;
+                        speechConfirmCount = 0;
                         return requestAnimationFrame(monitorVolume);
                     }
                     
-                    // Start of speech
+                    // Start of speech (confirmed)
                     isSpeaking = true;
                     speechStart = now;
                     silenceStart = null;
                     
-                    console.log('Speech started');
+                    console.log('Speech started (confirmed)');
                     
                     // Start recording
                     startAlwaysListeningRecording();
@@ -482,8 +487,9 @@
                 }
                 // Reset silence timer
                 silenceStart = null;
-                
             } else if (average < SILENCE_THRESHOLD) {
+                // Reset speech confirmation counter when below threshold
+                speechConfirmCount = 0;
                 // Silence detected
                 if (isSpeaking) {
                     if (!silenceStart) {
