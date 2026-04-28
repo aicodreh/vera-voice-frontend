@@ -420,7 +420,19 @@
             
             if (average > SPEECH_THRESHOLD) {
                 // Speech detected
-                if (!isSpeaking && !isProcessing) {
+                if (!isSpeaking) {
+                    // If Vera is speaking, interrupt her
+                    if (currentAudioSource) {
+                        console.log('Interrupting Vera...');
+                        stopCurrentAudio();
+                    }
+                    
+                    // If processing, don't start new recording
+                    if (isProcessing) {
+                        silenceStart = null;
+                        return requestAnimationFrame(monitorVolume);
+                    }
+                    
                     // Start of speech
                     isSpeaking = true;
                     speechStart = now;
@@ -928,12 +940,20 @@
                 console.error('Send error:', e);
                 
                 resetToReady();
-                setStatus('Error', 'red');
                 
+                // Only show error for timeouts, silently fail for other errors in always-listening mode
                 if (e.name === 'AbortError') {
+                    setStatus('Timeout', 'red');
                     addMessage('Request timed out. Please try a shorter message.', false);
-                } else {
+                } else if (!wakeWordEnabled) {
+                    // Only show error message if NOT in always-listening mode
+                    setStatus('Error', 'red');
                     addMessage('Sorry, there was an error processing your request. Please try again.', false);
+                } else {
+                    // In always-listening mode, just log and continue
+                    console.log('Skipping error message in always-listening mode');
+                    setStatus('Listening...', 'teal');
+                    instruction.textContent = 'Speak anytime...';
                 }
                 
                 
