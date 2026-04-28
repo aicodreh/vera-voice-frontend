@@ -241,11 +241,22 @@
         let currentAudioSource = null;  // Track playing audio so we can stop it
         let wakeWordEnabled = false;
         let wakeWordRecognition = null;
-        let conversationRecognition = null;
-        let silenceTimeout = null;
-        let currentTranscript = '';
-        let isConversationMode = false;
-        const SILENCE_THRESHOLD = 2000; // 2 seconds of silence = end of speech
+        const MAX_RECORDING_TIME = 15000; // 15 seconds max recording
+        let recordingTimeout = null;
+        
+        // Always-listening mode state
+        let alwaysListening = false;
+        let listeningStream = null;
+        let analyser = null;
+        let silenceStart = null;
+        let speechStart = null;
+        let isSpeaking = false;
+        let alwaysListeningRecorder = null;
+        let alwaysListeningChunks = [];
+        const SILENCE_THRESHOLD = 15; // Volume level below this = silence
+        const SPEECH_THRESHOLD = 25; // Volume level above this = speech
+        const SILENCE_DURATION = 1500; // 1.5s silence = end of speech
+        const MIN_SPEECH_DURATION = 500; // Minimum speech duration to process
         
         // Wake word detection using Web Speech API
         function initWakeWord() {
@@ -272,14 +283,21 @@
                         transcript.includes('okay vera') ||
                         transcript.includes('vera') && transcript.length < 15) {
                         
-                        if (!isRecording && !isProcessing && !isConversationMode) {
-                            console.log('Wake word detected! Starting conversation mode...');
-                            // Stop wake word listening
+                        if (!isRecording && !isProcessing) {
+                            console.log('Wake word detected! Starting recording...');
+                            // Stop wake word listening temporarily
                             stopWakeWordListening();
                             // Visual feedback
                             if (navigator.vibrate) navigator.vibrate(100);
-                            // Start conversation mode (continuous listening)
-                            startConversationMode();
+                            // Start recording with auto-stop
+                            startRecording();
+                            // Auto-stop after max time
+                            recordingTimeout = setTimeout(() => {
+                                if (isRecording) {
+                                    console.log('Max recording time reached');
+                                    stopRecording();
+                                }
+                            }, MAX_RECORDING_TIME);
                         }
                         break;
                     }
@@ -325,201 +343,226 @@
             }
         }
         
-        // Conversation mode - continuous listening with silence detection
-        function startConversationMode() {
-            if (isConversationMode || isProcessing) return;
-            
-            isConversationMode = true;
-            currentTranscript = '';
-            
-            // Stop any playing audio
-            stopCurrentAudio();
-            
-            // UI updates
-            micContainer.classList.add('recording');
-            setStatus('Listening...', 'teal');
-            instruction.textContent = 'Speak naturally... (pause when done)';
-            waveformContainer.classList.remove('hidden');
-            
-            // Create speech recognition for conversation
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            conversationRecognition = new SpeechRecognition();
-            conversationRecognition.continuous = true;
-            conversationRecognition.interimResults = true;
-            conversationRecognition.lang = 'en-US';
-            
-            conversationRecognition.onresult = (event) => {
-                let interimTranscript = '';
-                let finalTranscript = '';
-                
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript;
-                    if (event.results[i].isFinal) {
-                        finalTranscript += transcript;
-                    } else {
-                        interimTranscript += transcript;
-                    }
-                }
-                
-                // Update current transcript
-                if (finalTranscript) {
-                    currentTranscript += finalTranscript + ' ';
-                    console.log('Final transcript so far:', currentTranscript);
-                }
-                
-                // Show real-time transcription
-                const displayText = currentTranscript + interimTranscript;
-                if (displayText.trim()) {
-                    instruction.textContent = displayText.trim().slice(-50) + (displayText.length > 50 ? '...' : '');
-                }
-                
-                // Reset silence timer on any speech activity
-                clearTimeout(silenceTimeout);
-                
-                // Only start silence timer if we have some final transcript
-                if (currentTranscript.trim()) {
-                    silenceTimeout = setTimeout(() => {
-                        console.log('Silence detected, ending turn...');
-                        endConversationTurn();
-                    }, SILENCE_THRESHOLD);
-                }
-            };
-            
-            conversationRecognition.onerror = (event) => {
-                console.log('Conversation recognition error:', event.error);
-                if (event.error === 'no-speech') {
-                    // No speech detected - wait longer
-                    clearTimeout(silenceTimeout);
-                    silenceTimeout = setTimeout(() => {
-                        if (currentTranscript.trim()) {
-                            endConversationTurn();
-                        } else {
-                            // No speech at all, go back to wake word
-                            stopConversationMode();
-                            instruction.textContent = 'No speech detected';
-                            setTimeout(() => {
-                                if (wakeWordEnabled) startWakeWordListening();
-                                resetToReady();
-                            }, 1500);
-                        }
-                    }, 2000);
-                }
-            };
-            
-            conversationRecognition.onend = () => {
-                // Restart if still in conversation mode and not processing
-                if (isConversationMode && !isProcessing) {
-                    try {
-                        conversationRecognition.start();
-                    } catch (e) {
-                        console.log('Could not restart conversation recognition');
-                    }
-                }
-            };
+        // Always-listening mode with voice activity detection
+        async function startAlwaysListening() {
+            if (alwaysListening || isProcessing) return;
             
             try {
-                conversationRecognition.start();
-                console.log('Conversation mode started');
+                // Get microphone stream
+                listeningStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Create audio context for volume analysis
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+                
+                // Create analyser node
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 512;
+                analyser.smoothingTimeConstant = 0.8;
+                
+                const source = audioContext.createMediaStreamSource(listeningStream);
+                source.connect(analyser);
+                
+                alwaysListening = true;
+                isSpeaking = false;
+                silenceStart = null;
+                speechStart = null;
+                
+                // Update UI
+                setStatus('Listening...', 'teal');
+                instruction.textContent = 'Speak anytime...';
+                
+                // Start monitoring volume
+                monitorVolume();
+                
+                console.log('Always-listening mode started');
+                
             } catch (e) {
-                console.error('Failed to start conversation mode:', e);
-                stopConversationMode();
+                console.error('Failed to start always-listening:', e);
+                setStatus('Mic Error', 'red');
             }
         }
         
-        function stopConversationMode() {
-            isConversationMode = false;
-            clearTimeout(silenceTimeout);
+        function stopAlwaysListening() {
+            alwaysListening = false;
+            isSpeaking = false;
             
-            if (conversationRecognition) {
-                try {
-                    conversationRecognition.stop();
-                } catch (e) {}
-                conversationRecognition = null;
+            if (listeningStream) {
+                listeningStream.getTracks().forEach(track => track.stop());
+                listeningStream = null;
             }
+            
+            if (alwaysListeningRecorder) {
+                try { alwaysListeningRecorder.stop(); } catch(e) {}
+                alwaysListeningRecorder = null;
+            }
+            
+            alwaysListeningChunks = [];
+            analyser = null;
+            
+            console.log('Always-listening mode stopped');
+        }
+        
+        function monitorVolume() {
+            if (!alwaysListening || !analyser) return;
+            
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(dataArray);
+            
+            // Calculate average volume
+            const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+            
+            const now = Date.now();
+            
+            if (average > SPEECH_THRESHOLD) {
+                // Speech detected
+                if (!isSpeaking && !isProcessing) {
+                    // Start of speech
+                    isSpeaking = true;
+                    speechStart = now;
+                    silenceStart = null;
+                    
+                    console.log('Speech started');
+                    
+                    // Start recording
+                    startAlwaysListeningRecording();
+                    
+                    // UI feedback
+                    micContainer.classList.add('recording');
+                    waveformContainer.classList.remove('hidden');
+                    instruction.textContent = 'Listening...';
+                }
+                // Reset silence timer
+                silenceStart = null;
+                
+            } else if (average < SILENCE_THRESHOLD) {
+                // Silence detected
+                if (isSpeaking) {
+                    if (!silenceStart) {
+                        silenceStart = now;
+                    } else if (now - silenceStart >= SILENCE_DURATION) {
+                        // Silence long enough - end of speech
+                        const speechDuration = now - speechStart;
+                        
+                        if (speechDuration >= MIN_SPEECH_DURATION) {
+                            console.log('Speech ended after', speechDuration, 'ms');
+                            endAlwaysListeningRecording();
+                        } else {
+                            console.log('Speech too short, ignoring');
+                            cancelAlwaysListeningRecording();
+                        }
+                        
+                        isSpeaking = false;
+                        speechStart = null;
+                        silenceStart = null;
+                    }
+                }
+            }
+            
+            // Continue monitoring
+            if (alwaysListening) {
+                requestAnimationFrame(monitorVolume);
+            }
+        }
+        
+        function startAlwaysListeningRecording() {
+            if (!listeningStream) return;
+            
+            alwaysListeningChunks = [];
+            
+            let options = {};
+            if (MediaRecorder.isTypeSupported('audio/webm')) {
+                options.mimeType = 'audio/webm';
+            }
+            
+            alwaysListeningRecorder = new MediaRecorder(listeningStream, options);
+            
+            alwaysListeningRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    alwaysListeningChunks.push(e.data);
+                }
+            };
+            
+            alwaysListeningRecorder.start(100);
+        }
+        
+        function cancelAlwaysListeningRecording() {
+            if (alwaysListeningRecorder) {
+                try { alwaysListeningRecorder.stop(); } catch(e) {}
+                alwaysListeningRecorder = null;
+            }
+            alwaysListeningChunks = [];
             
             micContainer.classList.remove('recording');
             waveformContainer.classList.add('hidden');
+            instruction.textContent = 'Speak anytime...';
         }
         
-        async function endConversationTurn() {
-            const text = currentTranscript.trim();
-            if (!text) return;
+        async function endAlwaysListeningRecording() {
+            if (!alwaysListeningRecorder) return;
             
-            console.log('End of speech detected. Transcript:', text);
+            // Stop recorder and wait for final data
+            const recorder = alwaysListeningRecorder;
+            alwaysListeningRecorder = null;
             
-            // Stop listening
-            stopConversationMode();
-            
-            // Show processing state
-            setProcessing(true);
-            setStatus('Processing', 'yellow');
-            instruction.textContent = 'Thinking...';
-            
-            // Add user message
-            addMessage(text, true);
-            
-            try {
-                // Send to API
-                const response = await fetch(`${API_URL}/api/chat`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text })
-                });
-                
-                if (!response.ok) throw new Error('API error');
-                
-                const data = await response.json();
-                const veraResponse = data.response || 'I received your message.';
-                
-                // Add Vera's response
-                addMessage(veraResponse, false);
-                
-                // Speak the response
-                await speakResponse(veraResponse);
-                
-                // After speaking, go back to conversation mode (continuous conversation)
-                if (wakeWordEnabled) {
-                    setTimeout(() => {
-                        if (!isProcessing) {
-                            startConversationMode();
+            return new Promise((resolve) => {
+                recorder.onstop = async () => {
+                    const audioBlob = new Blob(alwaysListeningChunks, { type: recorder.mimeType || 'audio/webm' });
+                    alwaysListeningChunks = [];
+                    
+                    // UI updates
+                    micContainer.classList.remove('recording');
+                    waveformContainer.classList.add('hidden');
+                    
+                    // Process if we have audio
+                    if (audioBlob.size > 1000) {
+                        // Pause listening while processing
+                        const wasListening = alwaysListening;
+                        
+                        setProcessing(true);
+                        instruction.textContent = 'Processing...';
+                        setStatus('Processing', 'yellow');
+                        
+                        await sendAudio(audioBlob);
+                        
+                        // Resume listening after response is done
+                        if (wasListening && wakeWordEnabled) {
+                            instruction.textContent = 'Speak anytime...';
+                            setStatus('Listening...', 'teal');
                         }
-                    }, 500);
-                }
+                    } else {
+                        instruction.textContent = 'Speak anytime...';
+                    }
+                    
+                    resolve();
+                };
                 
-            } catch (e) {
-                console.error('Conversation error:', e);
-                addMessage('Sorry, there was an error. Please try again.', false);
-                resetToReady();
-                if (wakeWordEnabled) {
-                    setTimeout(() => startWakeWordListening(), 1000);
-                }
-            }
-            
-            setProcessing(false);
+                recorder.stop();
+            });
         }
         
         function toggleWakeWord() {
             wakeWordEnabled = !wakeWordEnabled;
             
             if (wakeWordEnabled) {
-                if (!wakeWordRecognition) {
-                    if (!initWakeWord()) {
-                        wakeWordEnabled = false;
-                        alert('Wake word detection is not supported in this browser. Please use Chrome.');
-                        return;
-                    }
-                }
-                startWakeWordListening();
+                // Start always-listening mode
+                startAlwaysListening();
                 wakeToggle.classList.remove('bg-gray-700/50', 'text-gray-400');
                 wakeToggle.classList.add('bg-teal-500/30', 'text-teal-400');
-                wakeToggle.innerHTML = '🎤 Listening...';
-                instruction.textContent = 'Say "Hey Vera" or hold mic';
+                wakeToggle.innerHTML = '🎤 Always On';
             } else {
+                // Stop always-listening mode
+                stopAlwaysListening();
                 stopWakeWordListening();
                 wakeToggle.classList.remove('bg-teal-500/30', 'text-teal-400');
                 wakeToggle.classList.add('bg-gray-700/50', 'text-gray-400');
-                wakeToggle.innerHTML = '🎤 Wake';
+                wakeToggle.innerHTML = '🎤 Auto';
                 instruction.textContent = 'Hold to speak';
+                setStatus('Ready', 'green');
             }
         }
         
@@ -682,15 +725,22 @@
             micContainer.classList.remove('recording', 'speaking');
             waveformContainer.classList.add('hidden');
             
-            // Restore instruction based on wake word state
-            if (wakeWordEnabled) {
-                instruction.textContent = 'Say "Hey Vera" or hold mic';
-                // Restart wake word listening after a delay
-                setTimeout(() => startWakeWordListening(), 1000);
+            // Restore state based on always-listening mode
+            if (wakeWordEnabled && alwaysListening) {
+                instruction.textContent = 'Speak anytime...';
+                setStatus('Listening...', 'teal');
+            } else if (wakeWordEnabled) {
+                // Restart always-listening if it was enabled
+                setTimeout(() => {
+                    if (wakeWordEnabled && !alwaysListening && !isProcessing) {
+                        startAlwaysListening();
+                    }
+                }, 1000);
+                instruction.textContent = 'Resuming...';
             } else {
                 instruction.textContent = 'Hold to speak';
+                setStatus('Ready', 'green');
             }
-            setStatus('Ready', 'green');
         }
         
         // Start recording
@@ -758,7 +808,7 @@
                 micIcon.classList.add('hidden');
                 stopIcon.classList.remove('hidden');
                 waveformContainer.classList.remove('hidden');
-                instruction.textContent = 'Listening...';
+                instruction.textContent = 'Listening... (tap mic to send)';
                 setStatus('Recording', 'teal');
                 
             } catch (e) {
@@ -770,6 +820,12 @@
         
         // Stop recording
         function stopRecording() {
+            // Clear any auto-stop timeout
+            if (recordingTimeout) {
+                clearTimeout(recordingTimeout);
+                recordingTimeout = null;
+            }
+            
             if (mediaRecorder && isRecording) {
                 mediaRecorder.stop();
                 isRecording = false;
@@ -878,17 +934,26 @@
             }
         }
         
-        // Event listeners - hold to talk
+        // Event listeners - hold to talk OR tap to stop (wake word mode)
         micBtn.addEventListener('mousedown', (e) => {
             e.preventDefault();
+            // If already recording (from wake word), click to stop
+            if (isRecording) {
+                stopRecording();
+                return;
+            }
             if (!isProcessing) startRecording();
         });
         micBtn.addEventListener('mouseup', (e) => {
             e.preventDefault();
-            stopRecording();
+            // Only stop on mouseup if NOT in wake word mode
+            if (isRecording && !wakeWordEnabled) {
+                stopRecording();
+            }
         });
         micBtn.addEventListener('mouseleave', () => {
-            if (isRecording) stopRecording();
+            // Only stop on mouseleave if NOT in wake word mode
+            if (isRecording && !wakeWordEnabled) stopRecording();
         });
         
         // Touch events for mobile - with better responsiveness
@@ -897,6 +962,14 @@
             e.stopPropagation();
             // Initialize audio context on touch (iOS requirement)
             initAudioContext();
+            
+            // If already recording (from wake word), tap to stop
+            if (isRecording) {
+                if (navigator.vibrate) navigator.vibrate(50);
+                stopRecording();
+                return;
+            }
+            
             if (!isProcessing) {
                 // Vibrate for haptic feedback if supported
                 if (navigator.vibrate) navigator.vibrate(50);
@@ -907,7 +980,11 @@
         micBtn.addEventListener('touchend', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            stopRecording();
+            // Only stop on touchend if we're NOT in wake word mode recording
+            // (wake word mode uses tap-to-stop, not hold-to-talk)
+            if (isRecording && !wakeWordEnabled) {
+                stopRecording();
+            }
         }, { passive: false });
         
         // Prevent context menu on long press
