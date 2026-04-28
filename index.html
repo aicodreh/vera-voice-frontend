@@ -105,8 +105,13 @@
                     <p class="text-xs text-gray-400">AI Executive Assistant</p>
                 </div>
             </div>
-            <div id="status" class="text-xs px-3 py-1 rounded-full bg-green-500/20 text-green-400">
-                Ready
+            <div class="flex items-center gap-2">
+                <button id="wake-toggle" class="text-xs px-3 py-1 rounded-full bg-gray-700/50 text-gray-400 hover:bg-gray-600/50 transition-colors" title="Enable 'Hey Vera' wake word">
+                    🎤 Wake
+                </button>
+                <div id="status" class="text-xs px-3 py-1 rounded-full bg-green-500/20 text-green-400">
+                    Ready
+                </div>
             </div>
         </div>
     </header>
@@ -209,6 +214,7 @@
         const waveformContainer = document.getElementById('waveform-container');
         const textInput = document.getElementById('text-input');
         const sendBtn = document.getElementById('send-btn');
+        const wakeToggle = document.getElementById('wake-toggle');
         
         // State
         let mediaRecorder = null;
@@ -219,6 +225,117 @@
         let currentStream = null;
         let audioContext = null;
         let currentAudioSource = null;  // Track playing audio so we can stop it
+        let wakeWordEnabled = false;
+        let wakeWordRecognition = null;
+        
+        // Wake word detection using Web Speech API
+        function initWakeWord() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                console.log('Wake word not supported in this browser');
+                wakeToggle.style.display = 'none';
+                return false;
+            }
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            wakeWordRecognition = new SpeechRecognition();
+            wakeWordRecognition.continuous = true;
+            wakeWordRecognition.interimResults = true;
+            wakeWordRecognition.lang = 'en-US';
+            
+            wakeWordRecognition.onresult = (event) => {
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript.toLowerCase().trim();
+                    console.log('Wake word heard:', transcript);
+                    
+                    // Check for wake words
+                    if (transcript.includes('hey vera') || 
+                        transcript.includes('hi vera') || 
+                        transcript.includes('okay vera') ||
+                        transcript.includes('vera') && transcript.length < 15) {
+                        
+                        if (!isRecording && !isProcessing) {
+                            console.log('Wake word detected! Starting recording...');
+                            // Stop wake word listening temporarily
+                            stopWakeWordListening();
+                            // Visual feedback
+                            if (navigator.vibrate) navigator.vibrate(100);
+                            // Start recording
+                            startRecording();
+                            // Auto-stop after 5 seconds
+                            setTimeout(() => {
+                                if (isRecording) {
+                                    stopRecording();
+                                }
+                            }, 5000);
+                        }
+                        break;
+                    }
+                }
+            };
+            
+            wakeWordRecognition.onerror = (event) => {
+                console.log('Wake word error:', event.error);
+                if (event.error === 'no-speech' || event.error === 'audio-capture') {
+                    // Restart listening
+                    if (wakeWordEnabled) {
+                        setTimeout(() => startWakeWordListening(), 500);
+                    }
+                }
+            };
+            
+            wakeWordRecognition.onend = () => {
+                // Restart if still enabled
+                if (wakeWordEnabled && !isRecording && !isProcessing) {
+                    setTimeout(() => startWakeWordListening(), 500);
+                }
+            };
+            
+            return true;
+        }
+        
+        function startWakeWordListening() {
+            if (wakeWordRecognition && wakeWordEnabled && !isRecording && !isProcessing) {
+                try {
+                    wakeWordRecognition.start();
+                    console.log('Wake word listening started');
+                } catch (e) {
+                    console.log('Wake word already listening');
+                }
+            }
+        }
+        
+        function stopWakeWordListening() {
+            if (wakeWordRecognition) {
+                try {
+                    wakeWordRecognition.stop();
+                } catch (e) {}
+            }
+        }
+        
+        function toggleWakeWord() {
+            wakeWordEnabled = !wakeWordEnabled;
+            
+            if (wakeWordEnabled) {
+                if (!wakeWordRecognition) {
+                    if (!initWakeWord()) {
+                        wakeWordEnabled = false;
+                        alert('Wake word detection is not supported in this browser. Please use Chrome.');
+                        return;
+                    }
+                }
+                startWakeWordListening();
+                wakeToggle.classList.remove('bg-gray-700/50', 'text-gray-400');
+                wakeToggle.classList.add('bg-teal-500/30', 'text-teal-400');
+                wakeToggle.innerHTML = '🎤 Listening...';
+                instruction.textContent = 'Say "Hey Vera" or hold mic';
+            } else {
+                stopWakeWordListening();
+                wakeToggle.classList.remove('bg-teal-500/30', 'text-teal-400');
+                wakeToggle.classList.add('bg-gray-700/50', 'text-gray-400');
+                wakeToggle.innerHTML = '🎤 Wake';
+                instruction.textContent = 'Hold to speak';
+            }
+        }
         
         // Stop any currently playing audio
         function stopCurrentAudio() {
@@ -332,7 +449,15 @@
             setProcessing(false);
             micContainer.classList.remove('recording', 'speaking');
             waveformContainer.classList.add('hidden');
-            instruction.textContent = 'Hold to speak';
+            
+            // Restore instruction based on wake word state
+            if (wakeWordEnabled) {
+                instruction.textContent = 'Say "Hey Vera" or hold mic';
+                // Restart wake word listening after a delay
+                setTimeout(() => startWakeWordListening(), 1000);
+            } else {
+                instruction.textContent = 'Hold to speak';
+            }
             setStatus('Ready', 'green');
         }
         
@@ -676,6 +801,12 @@
                 micContainer.classList.remove('speaking');
             }
         }
+        
+        // Wake word toggle
+        wakeToggle.addEventListener('click', () => {
+            initAudioContext();  // Needed for iOS
+            toggleWakeWord();
+        });
         
         // Initialize on load
         init();
