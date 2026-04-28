@@ -263,8 +263,12 @@
         let silenceAnalyser = null;
         let silenceCheckInterval = null;
         let lastSoundTime = null;
-        const SILENCE_THRESHOLD = 15; // Volume below this = silence
+        const SILENCE_THRESHOLD = 30; // Volume below this = silence (raised more)
+        const SPEECH_THRESHOLD = 45; // Volume must exceed this to count as speech (raised significantly)
         const SILENCE_DURATION = 2000; // 2 seconds of silence = stop
+        const MIN_SPEECH_DURATION = 800; // Minimum 0.8s of speech required
+        let hasSpeechStarted = false; // Track if real speech was detected
+        let speechStartTime = null; // When speech started
         
         // Conversation mode - continuous back-and-forth
         let conversationMode = false;
@@ -402,6 +406,9 @@
             
             lastSoundTime = Date.now();
             
+            hasSpeechStarted = false;
+            speechStartTime = null;
+            
             silenceCheckInterval = setInterval(() => {
                 if (!isRecording) {
                     stopSilenceDetection();
@@ -412,14 +419,39 @@
                 silenceAnalyser.getByteFrequencyData(dataArray);
                 const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
                 
-                if (average > SILENCE_THRESHOLD) {
+                // Must exceed SPEECH_THRESHOLD to count as real speech (not typing/noise)
+                if (average > SPEECH_THRESHOLD) {
+                    if (!hasSpeechStarted) {
+                        hasSpeechStarted = true;
+                        speechStartTime = Date.now();
+                        console.log('Speech started (volume: ' + Math.round(average) + ')');
+                    }
                     lastSoundTime = Date.now();
+                } else if (average > SILENCE_THRESHOLD) {
+                    // Above silence but below speech threshold
+                    if (hasSpeechStarted) {
+                        lastSoundTime = Date.now();
+                    }
                 } else {
-                    // Check if silence duration exceeded
-                    if (Date.now() - lastSoundTime >= SILENCE_DURATION) {
-                        console.log('Silence detected, auto-stopping recording');
-                        stopSilenceDetection();
-                        stopRecording();
+                    // True silence - check if we should stop
+                    if (hasSpeechStarted) {
+                        const speechDuration = Date.now() - speechStartTime;
+                        const silenceDuration = Date.now() - lastSoundTime;
+                        
+                        if (silenceDuration >= SILENCE_DURATION) {
+                            // Only process if speech was long enough
+                            if (speechDuration >= MIN_SPEECH_DURATION) {
+                                console.log('Silence detected after ' + speechDuration + 'ms of speech, auto-stopping');
+                                stopSilenceDetection();
+                                stopRecording();
+                            } else {
+                                console.log('Speech too short (' + speechDuration + 'ms), ignoring');
+                                // Reset and keep listening
+                                hasSpeechStarted = false;
+                                speechStartTime = null;
+                                lastSoundTime = Date.now();
+                            }
+                        }
                     }
                 }
             }, 100);
@@ -431,6 +463,8 @@
                 silenceCheckInterval = null;
             }
             silenceAnalyser = null;
+            hasSpeechStarted = false;
+            speechStartTime = null;
         }
         
         // Stop any currently playing audio
@@ -650,8 +684,22 @@
                         currentStream = null;
                     }
                     
-                    if (audioBlob.size > 1000) {
+                    // Require minimum 5KB of audio to avoid Whisper hallucinations on noise
+                    if (audioBlob.size > 5000) {
                         await sendAudio(audioBlob);
+                    } else if (audioBlob.size > 1000) {
+                        console.log('Audio too short (' + audioBlob.size + ' bytes), skipping');
+                        // In conversation mode, just go back to listening
+                        if (conversationMode) {
+                            resetToReady();
+                            setTimeout(() => {
+                                if (wakeWordEnabled && conversationMode && !isRecording && !isProcessing) {
+                                    startRecording();
+                                }
+                            }, 500);
+                        } else {
+                            resetToReady();
+                        }
                     } else {
                         resetToReady();
                         addMessage("I didn't catch that. Please hold the button and speak clearly.", false);
