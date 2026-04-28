@@ -263,10 +263,10 @@
         let silenceAnalyser = null;
         let silenceCheckInterval = null;
         let lastSoundTime = null;
-        const SILENCE_THRESHOLD = 20; // Volume below this = silence
-        const SPEECH_THRESHOLD = 28; // Volume must exceed this to count as speech
-        const SILENCE_DURATION = 800; // 0.8 seconds of silence = stop (very fast)
-        const MIN_SPEECH_DURATION = 400; // Minimum 0.4s of speech required
+        const SILENCE_THRESHOLD = 18; // Volume below this = silence
+        const SPEECH_THRESHOLD = 25; // Volume must exceed this to count as speech
+        const SILENCE_DURATION = 500; // 0.5 seconds of silence = stop (faster)
+        const MIN_SPEECH_DURATION = 300; // Minimum 0.3s of speech required
         let hasSpeechStarted = false; // Track if real speech was detected
         let speechStartTime = null; // When speech started
         
@@ -318,6 +318,69 @@
         let interruptAnalyser = null;
         let interruptCheckInterval = null;
         const INTERRUPT_THRESHOLD = 35; // Lowered for easier interrupt
+        
+        // Real-time speech recognition for exit phrases
+        let speechRecognition = null;
+        const INSTANT_STOP_PHRASES = ['stop', 'goodbye', 'bye', 'that\'s all', 'nevermind', 'never mind', 'cancel'];
+        
+        function startRealtimeSpeechDetection() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                console.log('Speech recognition not supported');
+                return;
+            }
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            speechRecognition = new SpeechRecognition();
+            speechRecognition.continuous = true;
+            speechRecognition.interimResults = true;
+            speechRecognition.lang = 'en-US';
+            
+            speechRecognition.onresult = (event) => {
+                const last = event.results[event.results.length - 1];
+                const transcript = last[0].transcript.toLowerCase().trim();
+                
+                // Check for instant stop phrases
+                if (INSTANT_STOP_PHRASES.some(phrase => transcript.includes(phrase))) {
+                    console.log('Instant stop phrase detected: "' + transcript + '"');
+                    stopRealtimeSpeechDetection();
+                    if (isRecording) {
+                        // Don't process this audio, just stop
+                        if (mediaRecorder) {
+                            mediaRecorder.ondataavailable = null;
+                            mediaRecorder.onstop = () => {
+                                conversationMode = false;
+                                playExitChime();
+                                resetToReady();
+                                addMessage("Conversation ended.", false);
+                            };
+                            mediaRecorder.stop();
+                        }
+                    }
+                }
+            };
+            
+            speechRecognition.onerror = (e) => {
+                if (e.error !== 'no-speech' && e.error !== 'aborted') {
+                    console.log('Speech recognition error:', e.error);
+                }
+            };
+            
+            try {
+                speechRecognition.start();
+                console.log('Real-time speech detection started');
+            } catch (e) {
+                console.log('Could not start speech recognition:', e);
+            }
+        }
+        
+        function stopRealtimeSpeechDetection() {
+            if (speechRecognition) {
+                try {
+                    speechRecognition.stop();
+                } catch (e) {}
+                speechRecognition = null;
+            }
+        }
         
         // Porcupine Wake Word Detection
         async function initPorcupine() {
@@ -770,6 +833,11 @@
                 await stopWakeWordListening();
             }
             
+            // Start real-time speech detection for instant stop phrases
+            if (conversationMode) {
+                startRealtimeSpeechDetection();
+            }
+            
             // Clean up any previous recorder
             if (mediaRecorder) {
                 try { mediaRecorder.stop(); } catch(e) {}
@@ -807,8 +875,8 @@
                         currentStream = null;
                     }
                     
-                    // Require minimum 5KB of audio to avoid Whisper hallucinations on noise
-                    if (audioBlob.size > 5000) {
+                    // Require minimum 3KB of audio to avoid Whisper hallucinations on noise
+                    if (audioBlob.size > 3000) {
                         await sendAudio(audioBlob);
                     } else if (audioBlob.size > 1000) {
                         console.log('Audio too short (' + audioBlob.size + ' bytes), skipping');
@@ -866,6 +934,9 @@
             
             // Stop silence detection
             stopSilenceDetection();
+            
+            // Stop real-time speech detection
+            stopRealtimeSpeechDetection();
             
             if (mediaRecorder && isRecording) {
                 mediaRecorder.stop();
