@@ -106,14 +106,22 @@
                 </div>
             </div>
             <div class="flex items-center gap-2">
-                <button id="clear-chat" class="text-xs px-3 py-1 rounded-full bg-gray-700/50 text-gray-400 hover:bg-red-500/30 hover:text-red-400 transition-colors" title="Clear chat history">
-                    🗑️
-                </button>
                 <button id="wake-toggle" class="text-xs px-3 py-1 rounded-full bg-gray-700/50 text-gray-400 hover:bg-gray-600/50 transition-colors" title="Enable 'Hey Vera' wake word">
                     🎤 Wake
                 </button>
                 <div id="status" class="text-xs px-3 py-1 rounded-full bg-green-500/20 text-green-400">
                     Ready
+                </div>
+                <!-- Settings Menu -->
+                <div class="relative">
+                    <button id="settings-btn" class="text-xs px-3 py-1 rounded-full bg-gray-700/50 text-gray-400 hover:bg-gray-600/50 transition-colors" title="Settings">
+                        ⚙️
+                    </button>
+                    <div id="settings-menu" class="hidden absolute right-0 top-full mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50">
+                        <button id="clear-chat" class="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-red-500/20 hover:text-red-400 transition-colors rounded-lg flex items-center gap-2">
+                            🗑️ Clear Chat History
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -219,6 +227,8 @@
         const sendBtn = document.getElementById('send-btn');
         const wakeToggle = document.getElementById('wake-toggle');
         const clearChatBtn = document.getElementById('clear-chat');
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsMenu = document.getElementById('settings-menu');
         
         // State
         let mediaRecorder = null;
@@ -858,10 +868,24 @@
             toggleWakeWord();
         });
         
-        // Clear chat button
+        // Settings menu toggle
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            settingsMenu.classList.toggle('hidden');
+        });
+        
+        // Close settings menu when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!settingsMenu.contains(e.target) && e.target !== settingsBtn) {
+                settingsMenu.classList.add('hidden');
+            }
+        });
+        
+        // Clear chat button (inside settings)
         clearChatBtn.addEventListener('click', () => {
             if (confirm('Clear chat history?')) {
                 clearHistory();
+                settingsMenu.classList.add('hidden');
             }
         });
         
