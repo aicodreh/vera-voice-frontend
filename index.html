@@ -280,7 +280,7 @@
         let interruptStream = null;
         let interruptAnalyser = null;
         let interruptCheckInterval = null;
-        const INTERRUPT_THRESHOLD = 40; // Must be loud to interrupt
+        const INTERRUPT_THRESHOLD = 35; // Lowered for easier interrupt
         
         // Porcupine Wake Word Detection
         async function initPorcupine() {
@@ -476,6 +476,9 @@
         // Interrupt detection - allows user to interrupt Vera while speaking
         async function startInterruptDetection() {
             try {
+                // Small delay to let Vera's audio start playing first
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
                 interruptStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
                 if (!audioContext) {
@@ -487,11 +490,16 @@
                 
                 interruptAnalyser = audioContext.createAnalyser();
                 interruptAnalyser.fftSize = 512;
+                interruptAnalyser.smoothingTimeConstant = 0.3;
                 
                 const source = audioContext.createMediaStreamSource(interruptStream);
                 source.connect(interruptAnalyser);
                 
                 let consecutiveLoudFrames = 0;
+                let baselineVolume = 0;
+                let samplesCollected = 0;
+                
+                console.log('Interrupt detection started - speak to interrupt Vera');
                 
                 interruptCheckInterval = setInterval(() => {
                     if (!currentAudioSource) {
@@ -503,11 +511,21 @@
                     interruptAnalyser.getByteFrequencyData(dataArray);
                     const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
                     
-                    if (average > INTERRUPT_THRESHOLD) {
+                    // Collect baseline for first 5 samples (Vera's audio bleeding into mic)
+                    if (samplesCollected < 5) {
+                        baselineVolume = Math.max(baselineVolume, average);
+                        samplesCollected++;
+                        return;
+                    }
+                    
+                    // Must be significantly louder than baseline (user speaking over Vera)
+                    const effectiveThreshold = Math.max(INTERRUPT_THRESHOLD, baselineVolume + 15);
+                    
+                    if (average > effectiveThreshold) {
                         consecutiveLoudFrames++;
-                        // Require 3 consecutive loud frames to interrupt (avoid false triggers)
+                        // Require 3 consecutive loud frames to interrupt
                         if (consecutiveLoudFrames >= 3) {
-                            console.log('Interrupt detected! Stopping Vera and starting recording');
+                            console.log('Interrupt detected! (vol: ' + Math.round(average) + ' > threshold: ' + Math.round(effectiveThreshold) + ')');
                             stopInterruptDetection();
                             stopCurrentAudio();
                             startRecording();
